@@ -1,7 +1,9 @@
 # Welcome
 
-知乎：<https://www.zhihu.com/people/alphaztx>
+[CTAN](https://www.ctan.org/author/zhang-tx)
 
-B站：<https://space.bilibili.com/1643519436>
+[GitHub Page](https://github.com/AlphaZTX)
 
-GitHub：<https://github.com/AlphaZTX>
+[知乎网](https://www.zhihu.com/people/alphaztx)
+
+[B 站](https://space.bilibili.com/1643519436)
