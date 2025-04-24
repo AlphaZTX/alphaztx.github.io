@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>What time is it?</title>
+  <style>
+    @font-face {
+      font-family: 'AlphaClockVF';
+      src: url('assets/fonts/ttf/AlphaClockVF.ttf') format('truetype');
+    }
+
+    body {
+      margin: 0;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      background: #0f0f0f;
+      color: #eeeeee;
+      font-family: 'AlphaClockVF', system-ui, sans-serif;
+      overflow: hidden;
+    }
+
+    a {
+      color: #eeeeee;
+      text-decoration: none;
+    }
+
+    #controls {
+      display: flex;
+      flex-direction: row;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px;
+      background: #222;
+      font-family: system-ui, sans-serif;
+    }
+
+    #leftControls {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      overflow-x: auto;
+      white-space: nowrap;
+    }
+
+    #rightControls {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    #featureToggles {
+      display: flex;
+      flex-direction: row;
+      flex-wrap: nowrap;
+      gap: 12px;
+    }
+
+    .feature-block {
+      flex: 0 0 auto;
+    }
+
+    .feature-block label {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 14px;
+      color: #ccc;
+    }
+
+    #datetime {
+      flex-grow: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      transition: font-variation-settings 0.04s ease;
+    }
+
+    #datetimeText {
+      font-variation-settings: 'wght' 500, 'ytuc' 100;
+      font-feature-settings: normal;
+    }
+
+    button {
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 14px;
+      background-color: #444;
+      color: white;
+      opacity: 0.7;
+    }
+
+    #lockStatus {
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 14px;
+      background-color: #444;
+      color: white;
+      opacity: 0.7;
+    }
+
+    #metrics {
+      display: flex;
+      flex-direction: column;
+      padding: 6px 12px;
+      font-family: system-ui, sans-serif;
+      background: #111;
+      gap: 8px;
+      position: absolute;
+      right: 0;
+      bottom: 0;
+      align-items: flex-end;
+      text-align: right;
+    }
+
+    .metric {
+      display: flex;
+      align-items: center;
+      font-size: 12px;
+      gap: 8px;
+    }
+
+    .metric-label {
+      width: 5em;
+      text-align: right;
+      flex-shrink: 0;
+    }
+
+    .copyrightText {
+      font-size: 12px;
+      opacity: 0.5;
+    }
+
+    .bar {
+      height: 6px;
+      max-width: 5em;
+      width: 5em;
+      background: #444;
+      border-radius: 3px;
+      overflow: hidden;
+      flex-grow: 1;
+    }
+
+    .fill {
+      height: 100%;
+      background: #2af;
+    }
+
+    #fpsDisplay {
+      font-size: 12px;
+      opacity: 0.5;
+    }
+  </style>
+
+  <script src="https://cdn.jsdelivr.net/npm/opentype.js@latest/dist/opentype.min.js"></script>
+</head>
+<body>
+  <div id="controls">
+    <div id="leftControls">
+      <b><a href="https://alphaztx.github.io" target="_blank">Home</a></b>
+      <span></span>
+      <label for="fontSize">Font Size</label>
+      <input type="range" id="fontSize" min="40" max="128" value="80" />
+      <span></span>
+      <label for="featureToggles">Features</label>
+      <div id="featureToggles"></div>
+    </div>
+    <div id="rightControls">
+      <button id="soundToggle">Sound Control: OFF</button>
+      <div id="lockStatus">Click anywhere or press Enter to see difference</div>
+    </div>
+  </div>
+  <div id="datetime"><div id="datetimeText">Loading...</div></div>
+  <div id="metrics">
+    <div class="metric">
+      <div class="metric-label">Weight</div>
+      <div class="bar"><div id="wghtBar" class="fill" style="width:0%"></div></div>
+    </div>
+    <div class="metric">
+      <div class="metric-label">Height</div>
+      <div class="bar"><div id="ytucBar" class="fill" style="width:0%"></div></div>
+    </div>
+    <div id="fpsDisplay">FPS: --</div>
+    <div class="copyrightText">© Copyright 2025 AlphaZTX</div>
+  </div>
+
+  <script>
+    const datetimeText = document.getElementById('datetimeText');
+    const fontSizeSlider = document.getElementById('fontSize');
+    const soundToggle = document.getElementById('soundToggle');
+    const featureTogglesContainer = document.getElementById('featureToggles');
+    const lockStatus = document.getElementById('lockStatus');
+    const wghtBar = document.getElementById('wghtBar');
+    const ytucBar = document.getElementById('ytucBar');
+    const fpsDisplay = document.getElementById('fpsDisplay');
+    const featureToggles = {};
+  
+    let wghtRange = [100, 1000];
+    let ytucRange = [100, 250];
+    let currentWght = 500;
+    let currentYtuc = 100;
+    let mouseControlEnabled = true;
+    let soundControlEnabled = false;
+    let audioContext, analyser, microphone, dataArray;
+    let availableFeatures = [];
+    const tagLookupMap = new Map();
+    let variationNeedsUpdate = false;
+  
+    let lastFrame = performance.now();
+    let frameCount = 0;
+    let fps = 0;
+  
+    function updateFPS(now) {
+      frameCount++;
+      if (now - lastFrame >= 1000) {
+        fps = frameCount;
+        frameCount = 0;
+        lastFrame = now;
+        fpsDisplay.textContent = `FPS: ${fps}`;
+      }
+    }
+  
+    function variationUpdateLoop(now) {
+      if (variationNeedsUpdate) {
+        applyFontVariation();
+        variationNeedsUpdate = false;
+      }
+      updateFPS(now);
+      requestAnimationFrame(variationUpdateLoop);
+    }
+  
+    async function loadFontAxesAndFeatures() {
+      const font = new FontFace('AlphaClockVF', 'url(assets/fonts/ttf/AlphaClockVF.ttf)');
+      await font.load();
+      document.fonts.add(font);
+  
+      if (font.variationAxes) {
+        for (const axis of font.variationAxes) {
+          if (axis.tag === 'wght') wghtRange = [axis.minValue, axis.maxValue];
+          if (axis.tag === 'ytuc') ytucRange = [axis.minValue, axis.maxValue];
+        }
+      }
+  
+      const response = await fetch('assets/fonts/ttf/AlphaClockVF.ttf');
+      const arrayBuffer = await response.arrayBuffer();
+      const fontObj = opentype.parse(arrayBuffer);
+  
+      const gsub = fontObj.tables.gsub;
+      if (!gsub || !gsub.features || !gsub.lookups) return;
+  
+      const featureTags = new Set();
+      for (const featureRecord of gsub.features) {
+        const tag = featureRecord.tag;
+        const lookupIndexes = featureRecord.feature.lookupListIndexes;
+        featureTags.add(tag);
+        if (!tagLookupMap.has(tag)) tagLookupMap.set(tag, []);
+        for (const lookupIndex of lookupIndexes) {
+          const lookup = gsub.lookups[lookupIndex];
+          if (!lookup) continue;
+          tagLookupMap.get(tag).push({
+            index: lookupIndex,
+            type: lookup.lookupType,
+            subTables: lookup.subtables || []
+          });
+        }
+      }
+  
+      availableFeatures = Array.from(featureTags).sort();
+      createFeatureToggles();
+      if (featureToggles['tnum']) featureToggles['tnum'].checked = true;
+      updateFontFeatures();
+    }
+  
+    function createFeatureToggles() {
+      featureTogglesContainer.innerHTML = '';
+      for (const feature of availableFeatures) {
+        const id = `${feature}Toggle`;
+        const wrapper = document.createElement('div');
+        wrapper.className = 'feature-block';
+  
+        const label = document.createElement('label');
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.id = id;
+        checkbox.dataset.feature = feature;
+        checkbox.addEventListener('change', updateFontFeatures);
+  
+        label.appendChild(checkbox);
+        label.append(` ${feature}`);
+        wrapper.appendChild(label);
+        featureTogglesContainer.appendChild(wrapper);
+        featureToggles[feature] = checkbox;
+      }
+    }
+  
+    function updateFontFeatures() {
+      const features = [];
+      for (const tag in featureToggles) {
+        features.push(`'${tag}' ${featureToggles[tag].checked ? 'on' : 'off'}`);
+      }
+      datetimeText.style.fontFeatureSettings = features.join(', ');
+    }
+  
+    function applyFontVariation() {
+      datetimeText.style.fontVariationSettings = `'wght' ${currentWght.toFixed(1)}, 'ytuc' ${currentYtuc.toFixed(1)}`;
+      const wPct = ((currentWght - wghtRange[0]) / (wghtRange[1] - wghtRange[0])) * 100;
+      const yPct = ((currentYtuc - ytucRange[0]) / (ytucRange[1] - ytucRange[0])) * 100;
+      wghtBar.style.width = `${wPct}%`;
+      ytucBar.style.width = `${yPct}%`;
+    }
+  
+    function updateDateTime() {
+      const now = new Date();
+      const yyyy = now.getFullYear();
+      const mm = String(now.getMonth() + 1).padStart(2, '0');
+      const dd = String(now.getDate()).padStart(2, '0');
+      const hh = String(now.getHours()).padStart(2, '0');
+      const min = String(now.getMinutes()).padStart(2, '0');
+      const ss = String(now.getSeconds()).padStart(2, '0');
+      datetimeText.textContent = `${yyyy}-${mm}-${dd} ${hh}:${min}:${ss}`;
+    }
+  
+    function updateFontAxes(e) {
+      if (!mouseControlEnabled) return;
+      const x = e.clientX / window.innerWidth;
+      const y = 1 - (e.clientY / window.innerHeight);
+      currentWght = wghtRange[0] + (wghtRange[1] - wghtRange[0]) * x;
+      currentYtuc = ytucRange[0] + (ytucRange[1] - ytucRange[0]) * y;
+      variationNeedsUpdate = true;
+    }
+  
+    function toggleMouseControl() {
+      mouseControlEnabled = !mouseControlEnabled;
+      lockStatus.textContent = mouseControlEnabled ? 'Mouse Control: ON' : 'Mouse Control: OFF';
+    }
+  
+    async function toggleSoundControl() {
+      if (soundControlEnabled) {
+        soundControlEnabled = false;
+        mouseControlEnabled = true;
+        soundToggle.textContent = 'Sound Control: OFF';
+        if (microphone) microphone.disconnect();
+        if (analyser) analyser.disconnect();
+        if (audioContext) audioContext.close();
+        return;
+      }
+      soundControlEnabled = true;
+      mouseControlEnabled = false;
+      soundToggle.textContent = 'Sound Control: ON';
+  
+      audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      microphone = audioContext.createMediaStreamSource(stream);
+      analyser = audioContext.createAnalyser();
+      analyser.fftSize = 256;
+      dataArray = new Uint8Array(analyser.frequencyBinCount);
+  
+      microphone.connect(analyser);
+  
+      function analyze() {
+        if (!soundControlEnabled) return;
+        analyser.getByteFrequencyData(dataArray);
+        const volume = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
+        currentWght = wghtRange[0] + (wghtRange[1] - wghtRange[0]) * (volume / 255);
+  
+        let maxAmp = 0, maxIdx = 0;
+        for (let i = 0; i < dataArray.length; i++) {
+          if (dataArray[i] > maxAmp) {
+            maxAmp = dataArray[i];
+            maxIdx = i;
+          }
+        }
+        const pitchRatio = maxIdx / dataArray.length;
+        currentYtuc = ytucRange[0] + (ytucRange[1] - ytucRange[0]) * pitchRatio;
+        variationNeedsUpdate = true;
+        requestAnimationFrame(analyze);
+      }
+  
+      analyze();
+    }
+  
+    document.addEventListener('mousemove', updateFontAxes);
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') toggleMouseControl();
+    });
+    document.addEventListener('click', (e) => {
+      if (!e.target.closest('#controls')) toggleMouseControl();
+    });
+    soundToggle.addEventListener('click', toggleSoundControl);
+    fontSizeSlider.addEventListener('input', () => {
+      datetimeText.style.fontSize = fontSizeSlider.value + 'px';
+    });
+  
+    setInterval(updateDateTime, 1000);
+    loadFontAxesAndFeatures();
+    updateDateTime();
+    datetimeText.style.fontSize = fontSizeSlider.value + 'px';
+    variationUpdateLoop();
+  </script>
+</body>
+</html>
