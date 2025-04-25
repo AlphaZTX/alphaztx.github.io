@@ -263,6 +263,12 @@
     let pitchRatioFactor = 2;
     let reducedPitchRatio = 0;
 
+    let targetWght = 500;
+    let targetYtuc = 100;
+    let transitionDuration = 800; // 过渡时间(毫秒)
+    let transitionStartTime = 0;
+    let isTransitioning = false;
+
     // 使用防抖函数优化事件处理
     function debounce(func, wait) {
       let timeout;
@@ -296,7 +302,7 @@
       };
     }
 
-    function updateMetrics() {
+    function updateMetrics(timestamp) {
       const now = performance.now();
       frameCount++;
       
@@ -305,6 +311,19 @@
         frameCount = 0;
         lastFrame = now;
         fpsDisplay.textContent = `FPS: ${fps}`;
+      }
+      
+      // 平滑过渡逻辑
+      if (isTransitioning) {
+        const elapsed = timestamp - transitionStartTime;
+        const progress = Math.min(elapsed / transitionDuration, 1);
+        
+        currentWght = easeInOutQuad(progress, currentWght, targetWght - currentWght, 1);
+        currentYtuc = easeInOutQuad(progress, currentYtuc, targetYtuc - currentYtuc, 1);
+        
+        if (progress >= 1) {
+          isTransitioning = false;
+        }
       }
       
       const roundedWght = parseFloat(currentWght.toFixed(1));
@@ -324,6 +343,13 @@
       }
       
       animationFrameId = requestAnimationFrame(updateMetrics);
+    }
+
+    function easeInOutQuad(t, b, c, d) {
+      t /= d/2;
+      if (t < 1) return c/2*t*t + b;
+      t--;
+      return -c/2 * (t*(t-2) - 1) + b;
     }
 
     function startAnimationLoop() {
@@ -415,9 +441,9 @@
       const mm = String(now.getMonth() + 1).padStart(2, '0');
       const dd = String(now.getDate()).padStart(2, '0');
       const hh = String(now.getHours()).padStart(2, '0');
-      const min = String(now.getMinutes()).padStart(2, '0');
+      const mm2 = String(now.getMinutes()).padStart(2, '0');
       const ss = String(now.getSeconds()).padStart(2, '0');
-      datetimeText.textContent = `${yyyy}-${mm}-${dd} ${hh}:${min}:${ss}`;
+      datetimeText.textContent = `${yyyy}-${mm}-${dd} ${hh}:${mm2}:${ss}`;
       
       // 只在秒变化时更新，减少不必要的DOM操作
       setTimeout(updateDateTime, 1000 - now.getMilliseconds());
@@ -429,11 +455,19 @@
       const now = performance.now();
       if (now - lastMouseUpdate < 16) return; // ~60fps
       lastMouseUpdate = now;
-    
+      
       const x = e.clientX / window.innerWidth;
       const y = 1 - (e.clientY / window.innerHeight);
-      currentWght = wghtRange[0] + (wghtRange[1] - wghtRange[0]) * x;
-      currentYtuc = ytucRange[0] + (ytucRange[1] - ytucRange[0]) * y;
+      
+      // 设置目标值，但不直接修改当前值
+      targetWght = wghtRange[0] + (wghtRange[1] - wghtRange[0]) * x;
+      targetYtuc = ytucRange[0] + (ytucRange[1] - ytucRange[0]) * y;
+      
+      // 如果不在过渡中，开始过渡
+      if (!isTransitioning) {
+        isTransitioning = true;
+        transitionStartTime = now;
+      }
     }, 16);
   
     function toggleMouseControl() {
@@ -441,6 +475,15 @@
       lockStatus.textContent = mouseControlEnabled ? 'Mouse Control: ON' : 'Mouse Control: OFF';
       lockStatus.style.opacity = '1';
       setTimeout(() => lockStatus.style.opacity = '0.7', 1000);
+      
+      if (mouseControlEnabled) {
+        // 启用鼠标控制时开始平滑过渡
+        isTransitioning = true;
+        transitionStartTime = performance.now();
+        // 初始值与当前值相同，实际目标值由鼠标位置决定
+        targetWght = currentWght;
+        targetYtuc = currentYtuc;
+      }
     }
   
     async function toggleSoundControl() {
