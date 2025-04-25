@@ -8,6 +8,7 @@
     @font-face {
       font-family: 'AlphaClockVF';
       src: url('assets/fonts/ttf/AlphaClockVF.ttf') format('truetype');
+      font-display: swap;
     }
 
     body {
@@ -19,6 +20,8 @@
       color: #eeeeee;
       font-family: 'AlphaClockVF', system-ui, sans-serif;
       overflow: hidden;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
     }
 
     a {
@@ -34,6 +37,8 @@
       padding: 10px;
       background: #222;
       font-family: system-ui, sans-serif;
+      z-index: 10;
+      position: relative;
     }
 
     #leftControls {
@@ -42,6 +47,7 @@
       gap: 20px;
       overflow-x: auto;
       white-space: nowrap;
+      -webkit-overflow-scrolling: touch;
     }
 
     #rightControls {
@@ -67,6 +73,7 @@
       gap: 6px;
       font-size: 14px;
       color: #ccc;
+      cursor: pointer;
     }
 
     #datetime {
@@ -75,12 +82,15 @@
       align-items: center;
       justify-content: center;
       height: 100%;
-      transition: font-variation-settings 0.04s ease;
+      contain: strict;
     }
 
     #datetimeText {
       font-variation-settings: 'wght' 500, 'ytuc' 100;
       font-feature-settings: normal;
+      will-change: transform, font-variation-settings;
+      backface-visibility: hidden;
+      transform: translateZ(0);
     }
 
     button {
@@ -90,6 +100,13 @@
       background-color: #444;
       color: white;
       opacity: 0.7;
+      border: none;
+      cursor: pointer;
+      transition: opacity 0.2s;
+    }
+
+    button:hover {
+      opacity: 1;
     }
 
     #lockStatus {
@@ -99,6 +116,7 @@
       background-color: #444;
       color: white;
       opacity: 0.7;
+      transition: opacity 0.2s;
     }
 
     #metrics {
@@ -113,6 +131,8 @@
       bottom: 0;
       align-items: flex-end;
       text-align: right;
+      z-index: 10;
+      contain: content;
     }
 
     .metric {
@@ -120,6 +140,7 @@
       align-items: center;
       font-size: 12px;
       gap: 8px;
+      will-change: transform;
     }
 
     .metric-label {
@@ -141,16 +162,35 @@
       border-radius: 3px;
       overflow: hidden;
       flex-grow: 1;
+      contain: strict;
     }
 
     .fill {
       height: 100%;
       background: #2af;
+      will-change: width;
+      transition: width 0.1s ease-out;
     }
 
     #fpsDisplay {
       font-size: 12px;
       opacity: 0.5;
+    }
+
+    input[type="range"] {
+      -webkit-appearance: none;
+      height: 6px;
+      background: #444;
+      border-radius: 3px;
+      cursor: pointer;
+    }
+
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 14px;
+      height: 14px;
+      background: #2af;
+      border-radius: 50%;
     }
   </style>
 
@@ -196,7 +236,7 @@
     const ytucBar = document.getElementById('ytucBar');
     const fpsDisplay = document.getElementById('fpsDisplay');
     const featureToggles = {};
-  
+
     let wghtRange = [100, 1000];
     let ytucRange = [100, 250];
     let currentWght = 500;
@@ -206,11 +246,15 @@
     let audioContext, analyser, microphone, dataArray;
     let availableFeatures = [];
     const tagLookupMap = new Map();
-    let variationNeedsUpdate = false;
   
+    let lastWght = null;
+    let lastYtuc = null;
+
     let lastFrame = performance.now();
     let frameCount = 0;
     let fps = 0;
+    let animationFrameId = null;
+    let lastMouseUpdate = 0;
 
     let volume = 0;
     let volumeFactor = 2;
@@ -218,66 +262,121 @@
     let pitchRatio = 0;
     let pitchRatioFactor = 2;
     let reducedPitchRatio = 0;
-  
-    function updateFPS(now) {
+
+    // 使用防抖函数优化事件处理
+    function debounce(func, wait) {
+      let timeout;
+      return function() {
+        const context = this;
+        const args = arguments;
+        clearTimeout(timeout);
+        timeout = setTimeout(() => func.apply(context, args), wait);
+      };
+    }
+
+    // 使用节流函数优化高频事件
+    function throttle(func, limit) {
+      let lastFunc;
+      let lastRan;
+      return function() {
+        const context = this;
+        const args = arguments;
+        if (!lastRan) {
+          func.apply(context, args);
+          lastRan = Date.now();
+        } else {
+          clearTimeout(lastFunc);
+          lastFunc = setTimeout(function() {
+            if ((Date.now() - lastRan) >= limit) {
+              func.apply(context, args);
+              lastRan = Date.now();
+            }
+          }, limit - (Date.now() - lastRan));
+        }
+      };
+    }
+
+    function updateMetrics() {
+      const now = performance.now();
       frameCount++;
+      
       if (now - lastFrame >= 1000) {
-        fps = frameCount;
+        fps = Math.round(frameCount * 1000 / (now - lastFrame));
         frameCount = 0;
         lastFrame = now;
         fpsDisplay.textContent = `FPS: ${fps}`;
       }
-    }
-  
-    function variationUpdateLoop(now) {
-      if (variationNeedsUpdate) {
-        applyFontVariation();
-        variationNeedsUpdate = false;
+      
+      const roundedWght = parseFloat(currentWght.toFixed(1));
+      const roundedYtuc = parseFloat(currentYtuc.toFixed(1));
+      
+      if (roundedWght !== lastWght || roundedYtuc !== lastYtuc) {
+        lastWght = roundedWght;
+        lastYtuc = roundedYtuc;
+        
+        datetimeText.style.fontVariationSettings =
+          `'wght' ${roundedWght}, 'ytuc' ${roundedYtuc}`;
+
+        const wPct = ((roundedWght - wghtRange[0]) / (wghtRange[1] - wghtRange[0])) * 100;
+        const yPct = ((roundedYtuc - ytucRange[0]) / (ytucRange[1] - ytucRange[0])) * 100;
+        wghtBar.style.width = `${wPct}%`;
+        ytucBar.style.width = `${yPct}%`;
       }
-      updateFPS(now);
-      requestAnimationFrame(variationUpdateLoop);
+      
+      animationFrameId = requestAnimationFrame(updateMetrics);
     }
-  
+
+    function startAnimationLoop() {
+      if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+      }
+      updateMetrics();
+    }
+
     async function loadFontAxesAndFeatures() {
-      const font = new FontFace('AlphaClockVF', 'url(assets/fonts/ttf/AlphaClockVF.ttf)');
-      await font.load();
-      document.fonts.add(font);
-  
-      if (font.variationAxes) {
-        for (const axis of font.variationAxes) {
-          if (axis.tag === 'wght') wghtRange = [axis.minValue, axis.maxValue];
-          if (axis.tag === 'ytuc') ytucRange = [axis.minValue, axis.maxValue];
+      try {
+        const font = new FontFace('AlphaClockVF', 'url(assets/fonts/ttf/AlphaClockVF.ttf)');
+        await font.load();
+        document.fonts.add(font);
+    
+        if (font.variationAxes) {
+          for (const axis of font.variationAxes) {
+            if (axis.tag === 'wght') wghtRange = [axis.minValue, axis.maxValue];
+            if (axis.tag === 'ytuc') ytucRange = [axis.minValue, axis.maxValue];
+          }
         }
-      }
-  
-      const response = await fetch('assets/fonts/ttf/AlphaClockVF.ttf');
-      const arrayBuffer = await response.arrayBuffer();
-      const fontObj = opentype.parse(arrayBuffer);
-  
-      const gsub = fontObj.tables.gsub;
-      if (!gsub || !gsub.features || !gsub.lookups) return;
-  
-      const featureTags = new Set();
-      for (const featureRecord of gsub.features) {
-        const tag = featureRecord.tag;
-        const lookupIndexes = featureRecord.feature.lookupListIndexes;
-        featureTags.add(tag);
-        if (!tagLookupMap.has(tag)) tagLookupMap.set(tag, []);
-        for (const lookupIndex of lookupIndexes) {
-          const lookup = gsub.lookups[lookupIndex];
-          if (!lookup) continue;
-          tagLookupMap.get(tag).push({
-            index: lookupIndex,
-            type: lookup.lookupType,
-            subTables: lookup.subtables || []
-          });
+    
+        const response = await fetch('assets/fonts/ttf/AlphaClockVF.ttf');
+        const arrayBuffer = await response.arrayBuffer();
+        const fontObj = opentype.parse(arrayBuffer);
+    
+        const gsub = fontObj.tables.gsub;
+        if (gsub && gsub.features && gsub.lookups) {
+          const featureTags = new Set();
+          for (const featureRecord of gsub.features) {
+            const tag = featureRecord.tag;
+            const lookupIndexes = featureRecord.feature.lookupListIndexes;
+            featureTags.add(tag);
+            if (!tagLookupMap.has(tag)) tagLookupMap.set(tag, []);
+            for (const lookupIndex of lookupIndexes) {
+              const lookup = gsub.lookups[lookupIndex];
+              if (lookup) {
+                tagLookupMap.get(tag).push({
+                  index: lookupIndex,
+                  type: lookup.lookupType,
+                  subTables: lookup.subtables || []
+                });
+              }
+            }
+          }
+          availableFeatures = Array.from(featureTags).sort();
+          createFeatureToggles();
+          if (featureToggles['tnum']) featureToggles['tnum'].checked = true;
+          updateFontFeatures();
         }
+      } catch (error) {
+        console.error('Error loading font:', error);
       }
-  
-      availableFeatures = Array.from(featureTags).sort();
-      createFeatureToggles();
-      if (featureToggles['tnum']) featureToggles['tnum'].checked = true;
-      updateFontFeatures();
     }
   
     function createFeatureToggles() {
@@ -292,7 +391,7 @@
         checkbox.type = 'checkbox';
         checkbox.id = id;
         checkbox.dataset.feature = feature;
-        checkbox.addEventListener('change', updateFontFeatures);
+        checkbox.addEventListener('change', debounce(updateFontFeatures, 50));
   
         label.appendChild(checkbox);
         label.append(` ${feature}`);
@@ -310,14 +409,6 @@
       datetimeText.style.fontFeatureSettings = features.join(', ');
     }
   
-    function applyFontVariation() {
-      datetimeText.style.fontVariationSettings = `'wght' ${currentWght.toFixed(1)}, 'ytuc' ${currentYtuc.toFixed(1)}`;
-      const wPct = ((currentWght - wghtRange[0]) / (wghtRange[1] - wghtRange[0])) * 100;
-      const yPct = ((currentYtuc - ytucRange[0]) / (ytucRange[1] - ytucRange[0])) * 100;
-      wghtBar.style.width = `${wPct}%`;
-      ytucBar.style.width = `${yPct}%`;
-    }
-  
     function updateDateTime() {
       const now = new Date();
       const yyyy = now.getFullYear();
@@ -327,20 +418,29 @@
       const min = String(now.getMinutes()).padStart(2, '0');
       const ss = String(now.getSeconds()).padStart(2, '0');
       datetimeText.textContent = `${yyyy}-${mm}-${dd} ${hh}:${min}:${ss}`;
+      
+      // 只在秒变化时更新，减少不必要的DOM操作
+      setTimeout(updateDateTime, 1000 - now.getMilliseconds());
     }
   
-    function updateFontAxes(e) {
+    const updateFontAxes = throttle((e) => {
       if (!mouseControlEnabled) return;
+      
+      const now = performance.now();
+      if (now - lastMouseUpdate < 16) return; // ~60fps
+      lastMouseUpdate = now;
+    
       const x = e.clientX / window.innerWidth;
       const y = 1 - (e.clientY / window.innerHeight);
       currentWght = wghtRange[0] + (wghtRange[1] - wghtRange[0]) * x;
       currentYtuc = ytucRange[0] + (ytucRange[1] - ytucRange[0]) * y;
-      variationNeedsUpdate = true;
-    }
+    }, 16);
   
     function toggleMouseControl() {
       mouseControlEnabled = !mouseControlEnabled;
       lockStatus.textContent = mouseControlEnabled ? 'Mouse Control: ON' : 'Mouse Control: OFF';
+      lockStatus.style.opacity = '1';
+      setTimeout(() => lockStatus.style.opacity = '0.7', 1000);
     }
   
     async function toggleSoundControl() {
@@ -348,65 +448,93 @@
         soundControlEnabled = false;
         mouseControlEnabled = true;
         soundToggle.textContent = 'Sound Control: OFF';
+        soundToggle.style.opacity = '0.7';
         if (microphone) microphone.disconnect();
         if (analyser) analyser.disconnect();
-        if (audioContext) audioContext.close();
+        if (audioContext) await audioContext.close();
         return;
       }
-      soundControlEnabled = true;
-      mouseControlEnabled = false;
-      soundToggle.textContent = 'Sound Control: ON';
-  
-      audioContext = new (window.AudioContext || window.webkitAudioContext)();
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      microphone = audioContext.createMediaStreamSource(stream);
-      analyser = audioContext.createAnalyser();
-      analyser.fftSize = 256;
-      dataArray = new Uint8Array(analyser.frequencyBinCount);
-  
-      microphone.connect(analyser);
-  
-      function analyze() {
-        if (!soundControlEnabled) return;
-        analyser.getByteFrequencyData(dataArray);
-        volume = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
-        reducedVolume = Math.min(1, volume * volumeFactor / 255);
-        currentWght = wghtRange[0] + (wghtRange[1] - wghtRange[0]) * reducedVolume;
-  
-        let maxAmp = 0, maxIdx = 0;
-        for (let i = 0; i < dataArray.length; i++) {
-          if (dataArray[i] > maxAmp) {
-            maxAmp = dataArray[i];
-            maxIdx = i;
+      
+      try {
+        soundControlEnabled = true;
+        mouseControlEnabled = false;
+        soundToggle.textContent = 'Sound Control: ON';
+        soundToggle.style.opacity = '1';
+    
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        microphone = audioContext.createMediaStreamSource(stream);
+        analyser = audioContext.createAnalyser();
+        analyser.fftSize = 64; // 减少FFT大小以提高性能
+        dataArray = new Uint8Array(analyser.frequencyBinCount);
+    
+        microphone.connect(analyser);
+    
+        function analyze() {
+          if (!soundControlEnabled) return;
+          
+          analyser.getByteFrequencyData(dataArray);
+          
+          // 优化计算：只分析中间频率范围
+          const start = Math.floor(dataArray.length * 0.3);
+          const end = Math.floor(dataArray.length * 0.7);
+          let sum = 0;
+          let maxAmp = 0, maxIdx = start;
+          
+          for (let i = start; i < end; i++) {
+            sum += dataArray[i];
+            if (dataArray[i] > maxAmp) {
+              maxAmp = dataArray[i];
+              maxIdx = i;
+            }
           }
+          
+          volume = sum / (end - start);
+          reducedVolume = Math.min(1, volume * volumeFactor / 255);
+          currentWght = wghtRange[0] + (wghtRange[1] - wghtRange[0]) * reducedVolume;
+          
+          pitchRatio = (maxIdx - start) / (end - start);
+          reducedPitchRatio = Math.min(1, pitchRatio * pitchRatioFactor);
+          currentYtuc = ytucRange[0] + (ytucRange[1] - ytucRange[0]) * reducedPitchRatio;
+          
+          requestAnimationFrame(analyze);
         }
-        pitchRatio = maxIdx / dataArray.length;
-        reducedPitchRatio = Math.min(1, pitchRatio * pitchRatioFactor);
-        currentYtuc = ytucRange[0] + (ytucRange[1] - ytucRange[0]) * reducedPitchRatio;
-        variationNeedsUpdate = true;
-        requestAnimationFrame(analyze);
+    
+        analyze();
+      } catch (error) {
+        console.error('Error accessing microphone:', error);
+        soundControlEnabled = false;
+        mouseControlEnabled = true;
+        soundToggle.textContent = 'Sound Control: OFF';
+        soundToggle.style.opacity = '0.7';
       }
-  
-      analyze();
     }
   
+    // 事件监听器
     document.addEventListener('mousemove', updateFontAxes);
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') toggleMouseControl();
-    });
     document.addEventListener('click', (e) => {
       if (!e.target.closest('#controls')) toggleMouseControl();
     });
-    soundToggle.addEventListener('click', toggleSoundControl);
-    fontSizeSlider.addEventListener('input', () => {
-      datetimeText.style.fontSize = fontSizeSlider.value + 'px';
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') toggleMouseControl();
     });
-  
-    setInterval(updateDateTime, 1000);
+    
+    soundToggle.addEventListener('click', toggleSoundControl);
+    fontSizeSlider.addEventListener('input', debounce(() => {
+      datetimeText.style.fontSize = `${fontSizeSlider.value}px`;
+    }, 50));
+
+    // 初始化
     loadFontAxesAndFeatures();
     updateDateTime();
-    datetimeText.style.fontSize = fontSizeSlider.value + 'px';
-    variationUpdateLoop();
+    datetimeText.style.fontSize = `${fontSizeSlider.value}px`;
+    startAnimationLoop();
+    
+    // 清理
+    window.addEventListener('beforeunload', () => {
+      if (animationFrameId) cancelAnimationFrame(animationFrameId);
+      if (soundControlEnabled && audioContext) audioContext.close();
+    });
   </script>
 </body>
 </html>
