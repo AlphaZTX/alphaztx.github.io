@@ -211,6 +211,13 @@
     let lastFrame = performance.now();
     let frameCount = 0;
     let fps = 0;
+
+    let volume = 0;
+    let volumeFactor = 2;
+    let reducedVolume = 0;
+    let pitchRatio = 0;
+    let pitchRatioFactor = 2;
+    let reducedPitchRatio = 0;
   
     function updateFPS(now) {
       frameCount++;
@@ -362,8 +369,9 @@
       function analyze() {
         if (!soundControlEnabled) return;
         analyser.getByteFrequencyData(dataArray);
-        const volume = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
-        currentWght = wghtRange[0] + (wghtRange[1] - wghtRange[0]) * (volume / 255);
+        volume = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
+        reducedVolume = Math.min(1, volume * volumeFactor / 255);
+        currentWght = wghtRange[0] + (wghtRange[1] - wghtRange[0]) * reducedVolume;
   
         let maxAmp = 0, maxIdx = 0;
         for (let i = 0; i < dataArray.length; i++) {
@@ -372,8 +380,9 @@
             maxIdx = i;
           }
         }
-        const pitchRatio = maxIdx / dataArray.length;
-        currentYtuc = ytucRange[0] + (ytucRange[1] - ytucRange[0]) * pitchRatio;
+        pitchRatio = maxIdx / dataArray.length;
+        reducedPitchRatio = Math.min(1, pitchRatio * pitchRatioFactor);
+        currentYtuc = ytucRange[0] + (ytucRange[1] - ytucRange[0]) * reducedPitchRatio;
         variationNeedsUpdate = true;
         requestAnimationFrame(analyze);
       }
